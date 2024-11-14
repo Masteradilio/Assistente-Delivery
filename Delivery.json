@@ -1,0 +1,190 @@
+{
+    "Comment": "Fluxo avançado de Assistente de Delivery com AWS Step Functions, Bedrock e ML",
+    "StartAt": "IniciarProcessoDelivery",
+    "States": {
+      "IniciarProcessoDelivery": {
+        "Type": "Parallel",
+        "Branches": [
+          {
+            "StartAt": "RecepcaoPedido",
+            "States": {
+              "RecepcaoPedido": {
+                "Type": "Task",
+                "Resource": "arn:aws:lambda:region:account-id:function:ReceberPedido",
+                "Next": "ClassificacaoPedido"
+              },
+              "ClassificacaoPedido": {
+                "Type": "Choice",
+                "Choices": [
+                  {
+                    "Variable": "$.tipoPedido",
+                    "StringEquals": "Comida",
+                    "Next": "ProcessarPedidoComida"
+                  },
+                  {
+                    "Variable": "$.tipoPedido",
+                    "StringEquals": "Documento",
+                    "Next": "ProcessarPedidoDocumento"
+                  }
+                ]
+              },
+              "ProcessarPedidoComida": {
+                "Type": "Task",
+                "Resource": "arn:aws:lambda:region:account-id:function:ProcessarComida",
+                "Next": "VerificarDisponibilidadeComida"
+              },
+              "ProcessarPedidoDocumento": {
+                "Type": "Task",
+                "Resource": "arn:aws:lambda:region:account-id:function:ProcessarDocumento",
+                "Next": "VerificarDisponibilidadeDocumento"
+              },
+              "VerificarDisponibilidadeComida": {
+                "Type": "Task",
+                "Resource": "arn:aws:lambda:region:account-id:function:VerificarDisponibilidadeComida",
+                "Next": "AjustarEntregaComida",
+                "Catch": [
+                  {
+                    "ErrorEquals": ["ItemIndisponivel"],
+                    "Next": "RecomendarItemAlternativoComida"
+                  }
+                ]
+              },
+              "VerificarDisponibilidadeDocumento": {
+                "Type": "Task",
+                "Resource": "arn:aws:lambda:region:account-id:function:VerificarDisponibilidadeDocumento",
+                "Next": "AjustarEntregaDocumento",
+                "Catch": [
+                  {
+                    "ErrorEquals": ["ItemIndisponivel"],
+                    "Next": "RecomendarAlternativaDocumento"
+                  }
+                ]
+              },
+              "AjustarEntregaComida": {
+                "Type": "Parallel",
+                "Branches": [
+                  {
+                    "StartAt": "CalcularETAChef",
+                    "States": {
+                      "CalcularETAChef": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:lambda:region:account-id:function:CalcularETAComBaseNaCozinha",
+                        "Next": "AjustarRotaComida"
+                      },
+                      "AjustarRotaComida": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:lambda:region:account-id:function:AjustarRotaComBaseNoTransito",
+                        "Next": "FinalizarEntregaComida"
+                      }
+                    }
+                  },
+                  {
+                    "StartAt": "EnviarNotificacaoComida",
+                    "States": {
+                      "EnviarNotificacaoComida": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:sns:region:account-id:EnviarNotificacao",
+                        "Next": "MonitorarRespostaCliente"
+                      },
+                      "MonitorarRespostaCliente": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:bedrock:model:ChatGPT",
+                        "Next": "AjustarInteracaoComBaseNoFeedback"
+                      },
+                      "AjustarInteracaoComBaseNoFeedback": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:lambda:region:account-id:function:AjustarInteracaoNLP",
+                        "Next": "FinalizarInteracao"
+                      },
+                      "FinalizarInteracao": {
+                        "Type": "Succeed"
+                      }
+                    }
+                  }
+                ]
+              },
+              "RecomendarItemAlternativoComida": {
+                "Type": "Task",
+                "Resource": "arn:aws:lambda:region:account-id:function:RecomendarItemComida",
+                "Next": "FinalizarProcessoComida"
+              },
+              "RecomendarAlternativaDocumento": {
+                "Type": "Task",
+                "Resource": "arn:aws:lambda:region:account-id:function:RecomendarAlternativaDocumento",
+                "Next": "FinalizarProcessoDocumento"
+              },
+              "FinalizarEntregaComida": {
+                "Type": "Succeed"
+              },
+              "FinalizarProcessoComida": {
+                "Type": "Succeed"
+              },
+              "FinalizarProcessoDocumento": {
+                "Type": "Succeed"
+              }
+            }
+          }
+        ],
+        "Next": "GerenciarEntregadores"
+      },
+      "GerenciarEntregadores": {
+        "Type": "Task",
+        "Resource": "arn:aws:lambda:region:account-id:function:GerenciarEntregadores",
+        "Next": "NotificarCliente"
+      },
+      "NotificarCliente": {
+        "Type": "Task",
+        "Resource": "arn:aws:sns:region:account-id:EnviarNotificacao",
+        "Next": "MonitorarEntrega"
+      },
+      "MonitorarEntrega": {
+        "Type": "Map",
+        "Iterator": {
+          "StartAt": "VerificarStatusEntrega",
+          "States": {
+            "VerificarStatusEntrega": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:region:account-id:function:VerificarStatusEntrega",
+              "Next": "VerificarMudancaDeRota"
+            },
+            "VerificarMudancaDeRota": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.mudancaDeRota",
+                  "BooleanEquals": true,
+                  "Next": "AjustarRotaEntrega"
+                }
+              ],
+              "Default": "ConfirmarEntrega"
+            },
+            "AjustarRotaEntrega": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:region:account-id:function:AjustarRotaDinamica",
+              "Next": "ConfirmarEntrega"
+            },
+            "ConfirmarEntrega": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.entregaConfirmada",
+                  "BooleanEquals": true,
+                  "Next": "FinalizarProcesso"
+                }
+              ],
+              "Default": "AguardarConfirmacao"
+            },
+            "AguardarConfirmacao": {
+              "Type": "Wait",
+              "Seconds": 60,
+              "Next": "ConfirmarEntrega"
+            },
+            "FinalizarProcesso": {
+              "Type": "Succeed"
+            }
+          }
+        }
+      }
+    }
+  }
+  
